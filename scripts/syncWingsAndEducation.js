@@ -8,6 +8,11 @@ import User from '../models/User.js';
 import Course from '../models/Course.js';
 import Book from '../models/Book.js';
 import BookRequest from '../models/BookRequest.js';
+import HealthCamp from '../models/HealthCamp.js';
+import BloodDonor from '../models/BloodDonor.js';
+import EmergencyRequest from '../models/EmergencyRequest.js';
+import EmergencyTeamMember from '../models/EmergencyTeamMember.js';
+import HealthTask from '../models/HealthTask.js';
 
 export const syncWingsAndEducation = async () => {
   console.log('[Sync] Connecting to database...');
@@ -141,6 +146,42 @@ export const syncWingsAndEducation = async () => {
       await eduWing.save();
       console.log(`✓ Assigned Education Wing Leader: ${leaderCandidate.name} (${leaderCandidate.email})`);
     }
+  }
+
+  // Assign Wing Leader for Health Wing
+  const healthWing = wingMap['health'];
+  if (healthWing) {
+    let healthLeader = await User.findOne({ email: 'coordinator.health@wecanchange.org' });
+    if (!healthLeader) {
+      healthLeader = await User.findOne({ email: 'dr.mostafizur@wecanchange.org' });
+    }
+
+    if (!healthLeader) {
+      console.log('[Sync] Creating Health Wing Leader (Dr. Mostafizur Rahman)...');
+      healthLeader = new User({
+        name: 'ডা. মোস্তাফিজুর রহমান',
+        email: 'coordinator.health@wecanchange.org',
+        password: 'wccmember2026',
+        role: 'wing_leader',
+        assignedWing: healthWing._id,
+        volunteerWing: 'স্বাস্থ্য উইং (Health)',
+        phone: '+880 1715-678901',
+        memberId: 'WCC-HLTH-0001',
+        profession: 'মেডিসিন বিশেষজ্ঞ (MBBS, FCPS)',
+        status: 'active'
+      });
+      await healthLeader.save();
+    } else {
+      healthLeader.role = 'wing_leader';
+      healthLeader.assignedWing = healthWing._id;
+      healthLeader.volunteerWing = 'স্বাস্থ্য উইং (Health)';
+      if (!healthLeader.phone) healthLeader.phone = '+880 1715-678901';
+      await healthLeader.save();
+    }
+
+    healthWing.leader = healthLeader._id;
+    await healthWing.save();
+    console.log(`✓ Assigned Health Wing Leader: ${healthLeader.name} (${healthLeader.email})`);
   }
 
   // 2. Seed Free Courses for Education Wing if none exist
@@ -304,7 +345,122 @@ export const syncWingsAndEducation = async () => {
     }
   }
 
-  console.log('[Sync] All 5 wings and Education Wing features synchronized successfully!');
+  // 4. Seed Health Wing Camps if none exist
+  if (healthWing) {
+    const existingCamps = await HealthCamp.countDocuments();
+    if (existingCamps === 0) {
+      console.log('[Sync] Seeding initial free health camps...');
+      await HealthCamp.create({
+        title: 'ঝালকাঠি সদর ফ্রি মেডিকেল ও চক্ষু শিবির ২০২৬',
+        description: 'WCC স্বাস্থ্য উইংয়ের উদ্যোগে ঝালকাঠি ও আশেপাশের গ্রামীণ অসচ্ছল মানুষের জন্য দিনব্যাপী সম্পূর্ণ বিনামূল্যে বিশেষজ্ঞ চিকিৎসা পরামর্শ, ডায়াবেটিস টেস্ট ও প্রয়োজনীয় অ্যান্টিবায়োটিক ওষুধ বিতরণ।',
+        date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        time: 'সকাল ৯:০০ - বিকাল ৪:০০',
+        location: 'ঝালকাঠি সদর হাসপাতাল রোড সংলগ্ন পৌর পার্ক চত্বর',
+        district: 'ঝালকাঠি',
+        targetBeneficiaries: '৫০০+ সুবিধাবঞ্চিত মানুষ',
+        coverImage: 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&q=80&w=800',
+        doctors: [
+          { name: 'ডা. মোস্তাফিজুর রহমান', specialty: 'মেডিসিন বিশেষজ্ঞ', hospital: 'ঝালকাঠি সদর হাসপাতাল', degree: 'MBBS, FCPS (Medicine)' },
+          { name: 'ডা. নুসরাত জাহান', specialty: 'চক্ষু বিশেষজ্ঞ ও সার্জন', hospital: 'বরিশাল শের-ই-বাংলা মেডিকেল কলেজ হাসপাতাল', degree: 'MBBS, DO (Ophthalmology)' }
+        ],
+        services: [
+          'বিনামূল্যে বিশেষজ্ঞ চিকিৎসকের প্রেসক্রিপশন ও পরামর্শ',
+          'বিনামূল্যে প্রয়োজনীয় অ্যান্টিবায়োটিক, গ্যাস্ট্রিক ও ভিটামিন ওষুধ বিতরণ',
+          'ব্লাড প্রেসার ও ডায়াবেটিস স্ক্রিনিং',
+          'রক্তের গ্রুপ নির্ণয় (Blood Grouping)',
+          'চোখের ছানি পরীক্ষা ও প্রাথমিক চোখের ড্রপ বিতরণ'
+        ],
+        status: 'upcoming',
+        createdBy: adminUser?._id
+      });
+      console.log('✓ Seeded initial Free Health Camp');
+    }
+
+    // 5. Seed Blood Donors if none exist
+    const existingDonors = await BloodDonor.countDocuments();
+    if (existingDonors === 0) {
+      console.log('[Sync] Seeding initial blood donor directory...');
+      const donorsToSeed = [
+        {
+          name: 'সাজিদ মাহমুদ',
+          age: 24,
+          gender: 'Male',
+          bloodGroup: 'A+',
+          phone: '01712-345678',
+          location: 'পশ্চিম চাঁদকাঠি, ঝালকাঠি সদর',
+          district: 'ঝালকাঠি',
+          status: 'available',
+          donationCount: 4,
+          notes: 'জরুরি প্রয়োজনে যেকোনো সময় রক্ত দিতে প্রস্তুত।'
+        },
+        {
+          name: 'ফারহানা তাবাসসুম',
+          age: 22,
+          gender: 'Female',
+          bloodGroup: 'O+',
+          phone: '01819-876543',
+          location: 'কলেজ মোড়, ঝালকাঠি',
+          district: 'ঝালকাঠি',
+          status: 'available',
+          donationCount: 2,
+          notes: 'নিয়মিত স্বেচ্ছায় রক্তদাতা।'
+        },
+        {
+          name: 'মাহমুদুল হাসান',
+          age: 28,
+          gender: 'Male',
+          bloodGroup: 'B+',
+          phone: '01911-223344',
+          location: 'রূপাতলী বাসস্ট্যান্ড রোড',
+          district: 'বরিশাল',
+          status: 'available',
+          donationCount: 6,
+          notes: 'বরিশাল শের-ই-বাংলা হাসপাতালের কাছাকাছি অবস্থান।'
+        },
+        {
+          name: 'ডা. মোস্তাফিজুর রহমান',
+          age: 36,
+          gender: 'Male',
+          bloodGroup: 'O-',
+          phone: '+880 1715-678901',
+          location: 'হাসপাতাল কোয়ার্টার, ঝালকাঠি সদর',
+          district: 'ঝালকাঠি',
+          status: 'available',
+          donationCount: 12,
+          notes: 'রেয়ার ও-নেগেটিভ রক্তদাতা ও স্বাস্থ্য উইং লিডার।'
+        }
+      ];
+
+      for (const d of donorsToSeed) {
+        await BloodDonor.create(d);
+      }
+      console.log('✓ Seeded initial Blood Donors');
+    }
+
+    // 6. Seed Emergency Request if none exist
+    const existingEmergencies = await EmergencyRequest.countDocuments();
+    if (existingEmergencies === 0) {
+      console.log('[Sync] Seeding initial hospital emergency request...');
+      await EmergencyRequest.create({
+        patientName: 'আমেনা বেগম (৬৫ বছর)',
+        hospital: 'ঝালকাঠি সদর হাসপাতাল',
+        ward: 'মহিলা মেডিসিন ওয়ার্ড - বেড নং ১২',
+        contactName: 'আব্দুল করিম (ছেলে)',
+        contactPhone: '01755-112233',
+        emergencyType: 'admission',
+        urgency: 'critical',
+        description: 'বৃদ্ধ মায়ের হঠাৎ তীব্র শ্বাসকষ্ট ও নিউমোনিয়ার লক্ষণ দেখা দেওয়ায় জরুরি অক্সিজেন সাপোর্ট ও ভর্তি সংক্রান্ত সহায়তা প্রয়োজন।',
+        status: 'pending',
+        requester: {
+          name: 'আব্দুল করিম',
+          phone: '01755-112233'
+        }
+      });
+      console.log('✓ Seeded initial Hospital Emergency Request');
+    }
+  }
+
+  console.log('[Sync] All 5 wings, Education and Health Wing features synchronized successfully!');
 };
 
 // Auto run if executed directly

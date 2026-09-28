@@ -26,7 +26,14 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Initialize Database connection (handles MongoDB or resilient store)
-connectDB();
+connectDB().then(async () => {
+  try {
+    const { syncWingsAndEducation } = await import('./scripts/syncWingsAndEducation.js');
+    await syncWingsAndEducation();
+  } catch (err) {
+    console.warn('[Sync Wings Notice]', err.message);
+  }
+}).catch(() => {});
 
 // Middleware
 const rawClientUrl = process.env.CLIENT_URL || 'http://localhost:3000';

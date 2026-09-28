@@ -9,6 +9,11 @@ const canManageHealthWing = async (user) => {
   if (!user) return false;
   if (user.role === 'admin') return true;
 
+  const userEmail = (user.email || '').toLowerCase().trim();
+  if (userEmail === 'coordinator.health@wecanchange.org' || userEmail === 'dr.mostafizur@wecanchange.org') {
+    return true;
+  }
+
   const healthWing = await Store.getWingBySlug('health');
   if (!healthWing) return false;
 
@@ -18,6 +23,7 @@ const canManageHealthWing = async (user) => {
   if (leaderId && String(leaderId) === userId) return true;
   if (user.assignedWing && String(user.assignedWing) === String(healthWing._id)) return true;
   if (user.role === 'wing_leader' || user.role === 'coordinator') {
+    if (userEmail.includes('health')) return true;
     if (user.volunteerWing && (user.volunteerWing.toLowerCase().includes('স্বাস্থ্য') || user.volunteerWing.toLowerCase().includes('health'))) {
       return true;
     }
