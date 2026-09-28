@@ -13,6 +13,7 @@ import issueRoutes from './routes/issueRoutes.js';
 import statsRoutes from './routes/statsRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import educationRoutes from './routes/educationRoutes.js';
+import healthWingRoutes from './routes/healthWingRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -105,7 +106,9 @@ const routes = [
   ['/issues', issueRoutes],
   ['/stats', statsRoutes],
   ['/notifications', notificationRoutes],
-  ['/education', educationRoutes]
+  ['/education', educationRoutes],
+  ['/health', healthWingRoutes],
+  ['/health-wing', healthWingRoutes]
 ];
 
 routes.forEach(([path, router]) => {
