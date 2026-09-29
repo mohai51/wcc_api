@@ -139,13 +139,23 @@ router.post('/login', loginLimiter, async (req, res, next) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    let populatedWing = null;
+    if (user.assignedWing) {
+      if (typeof user.assignedWing === 'object' && user.assignedWing.slug) {
+        populatedWing = user.assignedWing;
+      } else {
+        populatedWing = await Store.getWingById(user.assignedWing);
+      }
+    }
+
     const token = jwt.sign(
       {
         id: user._id,
         email: user.email,
         role: user.role,
         name: user.name,
-        assignedWing: user.assignedWing ? (user.assignedWing._id || user.assignedWing) : null,
+        assignedWing: populatedWing ? populatedWing._id : (user.assignedWing ? (user.assignedWing._id || user.assignedWing) : null),
+        assignedWingSlug: populatedWing ? populatedWing.slug : null,
         volunteerWing: user.volunteerWing || ''
       },
       process.env.JWT_SECRET,
@@ -160,7 +170,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        assignedWing: user.assignedWing || null,
+        assignedWing: populatedWing || user.assignedWing || null,
         phone: user.phone,
         memberId: user.memberId,
         volunteerWing: user.volunteerWing || '',
