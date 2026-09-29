@@ -20,6 +20,11 @@ import Notification from '../models/Notification.js';
 import Course from '../models/Course.js';
 import Book from '../models/Book.js';
 import BookRequest from '../models/BookRequest.js';
+import HealthCamp from '../models/HealthCamp.js';
+import BloodDonor from '../models/BloodDonor.js';
+import EmergencyRequest from '../models/EmergencyRequest.js';
+import EmergencyTeamMember from '../models/EmergencyTeamMember.js';
+import HealthTask from '../models/HealthTask.js';
 import bcrypt from 'bcryptjs';
 
 // Empty in-memory fallback cache (used only if MongoDB is offline)
@@ -44,7 +49,12 @@ const memoryStore = {
   notifications: [],
   courses: [],
   books: [],
-  bookRequests: []
+  bookRequests: [],
+  healthCamps: [],
+  bloodDonors: [],
+  emergencyRequests: [],
+  emergencyTeam: [],
+  healthTasks: []
 };
 
 export const Store = {
@@ -329,6 +339,12 @@ export const Store = {
       type: 'Expense',
       activityId: data.activityId,
       activityName: data.activityName,
+      eventId: data.eventId,
+      eventTitle: data.eventTitle,
+      programId: data.programId,
+      programTitle: data.programTitle,
+      submittedByName: data.submittedByName,
+      submittedByRole: data.submittedByRole,
       category: data.category,
       description: data.description,
       amount: data.amount,
@@ -341,6 +357,21 @@ export const Store = {
       status: data.isPersonalExpense ? 'Pending Reimbursement' : 'Paid',
       createdBy: data.createdBy
     });
+
+    // If linked to an Activity, update its actualExpense
+    if (data.activityId) {
+      if (isDatabaseConnected()) {
+        await Activity.findOneAndUpdate(
+          { activityId: data.activityId },
+          { $inc: { actualExpense: Number(data.amount) || 0 } }
+        );
+      } else {
+        const act = memoryStore.activities.find(a => a.activityId === data.activityId);
+        if (act) {
+          act.actualExpense = (act.actualExpense || 0) + (Number(data.amount) || 0);
+        }
+      }
+    }
 
     if (isDatabaseConnected()) return await Expense.create(data);
     const newExp = { ...data, _id: 'exp_' + Date.now() };
@@ -469,6 +500,59 @@ export const Store = {
       categorySpend[e.category] = (categorySpend[e.category] || 0) + (e.amount || 0);
     });
 
+    // Event & Program Expenses breakdown
+    const eventWiseExpenses = {};
+    expenses.forEach(e => {
+      const evtKey = e.eventTitle || e.activityName || 'General Operations';
+      if (!eventWiseExpenses[evtKey]) {
+        eventWiseExpenses[evtKey] = {
+          title: evtKey,
+          eventId: e.eventId,
+          activityId: e.activityId,
+          totalAmount: 0,
+          itemCount: 0,
+          submittedBy: e.submittedByName || e.paidBy || 'Leader / Admin'
+        };
+      }
+      eventWiseExpenses[evtKey].totalAmount += (e.amount || 0);
+      eventWiseExpenses[evtKey].itemCount += 1;
+    });
+
+    // Monthly Analytics Trends (last 6 months)
+    const monthlyTrendsMap = {};
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    // Seed current year months
+    for (let m = 0; m < 12; m++) {
+      const key = `2026-${String(m + 1).padStart(2, '0')}`;
+      monthlyTrendsMap[key] = {
+        monthKey: key,
+        label: `${months[m]} 2026`,
+        income: 0,
+        expense: 0
+      };
+    }
+
+    income.forEach(i => {
+      if (i.date) {
+        const ym = i.date.substring(0, 7);
+        if (monthlyTrendsMap[ym]) {
+          monthlyTrendsMap[ym].income += (i.amount || 0);
+        }
+      }
+    });
+
+    expenses.forEach(e => {
+      if (e.date) {
+        const ym = e.date.substring(0, 7);
+        if (monthlyTrendsMap[ym]) {
+          monthlyTrendsMap[ym].expense += (e.amount || 0);
+        }
+      }
+    });
+
+    const monthlyTrends = Object.values(monthlyTrendsMap);
+
     return {
       totalLiquidity,
       totalIncome,
@@ -482,6 +566,8 @@ export const Store = {
         balance: a.currentBalance
       })),
       categorySpend,
+      monthlyTrends,
+      eventWiseExpenses: Object.values(eventWiseExpenses).sort((a, b) => b.totalAmount - a.totalAmount),
       recentTransactions: transactions,
       activitiesSummary: activities.map(act => ({
         id: act.activityId,
@@ -1918,6 +2004,530 @@ export const Store = {
         updatedAt: new Date()
       };
       return memoryStore.bookRequests[idx];
+    }
+    return null;
+  },
+
+  // ============================================================================
+  // HEALTH WING: FREE HEALTH CAMPS
+  // ============================================================================
+  async getHealthCamps({ status, district } = {}) {
+    if (isDatabaseConnected()) {
+      const query = {};
+      if (status && status !== 'all') query.status = status;
+      if (district && district !== 'all') query.district = district;
+      return await HealthCamp.find(query).sort({ date: -1, createdAt: -1 });
+    }
+
+    let list = [...memoryStore.healthCamps];
+    if (status && status !== 'all') list = list.filter(c => c.status === status);
+    if (district && district !== 'all') list = list.filter(c => c.district === district);
+    return list.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  },
+
+  async getHealthCampById(id) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId ? await HealthCamp.findById(id) : null;
+    }
+    return memoryStore.healthCamps.find(c => String(c._id) === String(id)) || null;
+  },
+
+  async createHealthCamp(data) {
+    if (isDatabaseConnected()) {
+      return await HealthCamp.create(data);
+    }
+    const newCamp = {
+      _id: 'camp_' + Date.now(),
+      ...data,
+      doctors: Array.isArray(data.doctors) ? data.doctors : [],
+      services: Array.isArray(data.services) ? data.services : [],
+      assignedVolunteers: Array.isArray(data.assignedVolunteers) ? data.assignedVolunteers : [],
+      registeredParticipants: [],
+      status: data.status || 'upcoming',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    memoryStore.healthCamps.unshift(newCamp);
+    return newCamp;
+  },
+
+  async updateHealthCamp(id, data) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId
+        ? await HealthCamp.findByIdAndUpdate(id, { $set: data }, { new: true, runValidators: true })
+        : null;
+    }
+    const idx = memoryStore.healthCamps.findIndex(c => String(c._id) === String(id));
+    if (idx !== -1) {
+      memoryStore.healthCamps[idx] = {
+        ...memoryStore.healthCamps[idx],
+        ...data,
+        updatedAt: new Date()
+      };
+      return memoryStore.healthCamps[idx];
+    }
+    return null;
+  },
+
+  async deleteHealthCamp(id) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId ? await HealthCamp.findByIdAndDelete(id) : null;
+    }
+    const idx = memoryStore.healthCamps.findIndex(c => String(c._id) === String(id));
+    if (idx !== -1) {
+      const removed = memoryStore.healthCamps.splice(idx, 1);
+      return removed[0];
+    }
+    return null;
+  },
+
+  async registerParticipantForCamp(campId, participantData) {
+    if (!campId) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof campId === 'string' && /^[0-9a-fA-F]{24}$/.test(campId);
+      if (!isObjectId) return null;
+      return await HealthCamp.findByIdAndUpdate(
+        campId,
+        { $push: { registeredParticipants: participantData } },
+        { new: true }
+      );
+    }
+    const camp = memoryStore.healthCamps.find(c => String(c._id) === String(campId));
+    if (camp) {
+      if (!Array.isArray(camp.registeredParticipants)) camp.registeredParticipants = [];
+      camp.registeredParticipants.push({
+        _id: 'part_' + Date.now(),
+        ...participantData,
+        registeredAt: new Date()
+      });
+      return camp;
+    }
+    return null;
+  },
+
+  async assignVolunteerToCamp(campId, volunteerData) {
+    if (!campId) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof campId === 'string' && /^[0-9a-fA-F]{24}$/.test(campId);
+      if (!isObjectId) return null;
+      return await HealthCamp.findByIdAndUpdate(
+        campId,
+        { $push: { assignedVolunteers: volunteerData } },
+        { new: true }
+      );
+    }
+    const camp = memoryStore.healthCamps.find(c => String(c._id) === String(campId));
+    if (camp) {
+      if (!Array.isArray(camp.assignedVolunteers)) camp.assignedVolunteers = [];
+      camp.assignedVolunteers.push({
+        _id: 'assign_' + Date.now(),
+        ...volunteerData
+      });
+      return camp;
+    }
+    return null;
+  },
+
+  // ============================================================================
+  // HEALTH WING: BLOOD BANK (রক্তদান কেন্দ্র)
+  // ============================================================================
+  async getBloodDonors({ bloodGroup, location, district, status, search } = {}) {
+    if (isDatabaseConnected()) {
+      const query = {};
+      if (bloodGroup && bloodGroup !== 'all') query.bloodGroup = bloodGroup;
+      if (location && location !== 'all') query.location = { $regex: location, $options: 'i' };
+      if (district && district !== 'all') query.district = { $regex: district, $options: 'i' };
+      if (status && status !== 'all') query.status = status;
+      if (search) {
+        query.$or = [
+          { name: { $regex: search, $options: 'i' } },
+          { phone: { $regex: search, $options: 'i' } },
+          { location: { $regex: search, $options: 'i' } }
+        ];
+      }
+      return await BloodDonor.find(query).sort({ status: 1, lastDonationDate: 1, createdAt: -1 });
+    }
+
+    let list = [...memoryStore.bloodDonors];
+    if (bloodGroup && bloodGroup !== 'all') list = list.filter(d => d.bloodGroup === bloodGroup);
+    if (location && location !== 'all') list = list.filter(d => (d.location || '').toLowerCase().includes(location.toLowerCase()));
+    if (district && district !== 'all') list = list.filter(d => (d.district || '').toLowerCase().includes(district.toLowerCase()));
+    if (status && status !== 'all') list = list.filter(d => d.status === status);
+    if (search) {
+      const s = search.toLowerCase();
+      list = list.filter(
+        d =>
+          (d.name && d.name.toLowerCase().includes(s)) ||
+          (d.phone && d.phone.includes(s)) ||
+          (d.location && d.location.toLowerCase().includes(s))
+      );
+    }
+    return list;
+  },
+
+  async getBloodDonorById(id) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId ? await BloodDonor.findById(id) : null;
+    }
+    return memoryStore.bloodDonors.find(d => String(d._id) === String(id)) || null;
+  },
+
+  async createBloodDonor(data) {
+    if (isDatabaseConnected()) {
+      return await BloodDonor.create(data);
+    }
+    const newDonor = {
+      _id: 'donor_' + Date.now(),
+      ...data,
+      status: data.status || 'available',
+      donationCount: Number(data.donationCount || 0),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    memoryStore.bloodDonors.unshift(newDonor);
+    return newDonor;
+  },
+
+  async updateBloodDonor(id, data) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId
+        ? await BloodDonor.findByIdAndUpdate(id, { $set: data }, { new: true, runValidators: true })
+        : null;
+    }
+    const idx = memoryStore.bloodDonors.findIndex(d => String(d._id) === String(id));
+    if (idx !== -1) {
+      memoryStore.bloodDonors[idx] = {
+        ...memoryStore.bloodDonors[idx],
+        ...data,
+        updatedAt: new Date()
+      };
+      return memoryStore.bloodDonors[idx];
+    }
+    return null;
+  },
+
+  async deleteBloodDonor(id) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId ? await BloodDonor.findByIdAndDelete(id) : null;
+    }
+    const idx = memoryStore.bloodDonors.findIndex(d => String(d._id) === String(id));
+    if (idx !== -1) {
+      const removed = memoryStore.bloodDonors.splice(idx, 1);
+      return removed[0];
+    }
+    return null;
+  },
+
+  // ============================================================================
+  // HEALTH WING: EMERGENCY CELL (হাসপাতাল ভর্তি ও জরুরি সহায়তা)
+  // ============================================================================
+  async getEmergencyRequests({ status, hospital, urgency } = {}) {
+    if (isDatabaseConnected()) {
+      const query = {};
+      if (status && status !== 'all') query.status = status;
+      if (hospital && hospital !== 'all') query.hospital = hospital;
+      if (urgency && urgency !== 'all') query.urgency = urgency;
+      return await EmergencyRequest.find(query).sort({ createdAt: -1 });
+    }
+
+    let list = [...memoryStore.emergencyRequests];
+    if (status && status !== 'all') list = list.filter(r => r.status === status);
+    if (hospital && hospital !== 'all') list = list.filter(r => r.hospital === hospital);
+    if (urgency && urgency !== 'all') list = list.filter(r => r.urgency === urgency);
+    return list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  },
+
+  async getMyEmergencyRequests(userId, contactPhone) {
+    if (isDatabaseConnected()) {
+      const query = { $or: [] };
+      if (userId) query.$or.push({ 'requester.user': userId });
+      if (contactPhone) query.$or.push({ contactPhone: contactPhone });
+      if (query.$or.length === 0) return [];
+      return await EmergencyRequest.find(query).sort({ createdAt: -1 });
+    }
+
+    return memoryStore.emergencyRequests.filter(r => {
+      if (userId && String(r.requester?.user) === String(userId)) return true;
+      if (contactPhone && r.contactPhone === contactPhone) return true;
+      return false;
+    });
+  },
+
+  async getEmergencyRequestById(id) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId ? await EmergencyRequest.findById(id) : null;
+    }
+    return memoryStore.emergencyRequests.find(r => String(r._id) === String(id)) || null;
+  },
+
+  async createEmergencyRequest(data) {
+    if (isDatabaseConnected()) {
+      return await EmergencyRequest.create(data);
+    }
+    const newReq = {
+      _id: 'emg_' + Date.now(),
+      ...data,
+      responses: [],
+      status: data.status || 'pending',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    memoryStore.emergencyRequests.unshift(newReq);
+    return newReq;
+  },
+
+  async updateEmergencyRequestStatus(id, { status, assignedVolunteer, responderName, message, user }) {
+    if (!id) return null;
+    const update = { status, updatedAt: new Date() };
+    if (assignedVolunteer) update.assignedVolunteer = assignedVolunteer;
+
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      if (!isObjectId) return null;
+
+      const pushObj = {};
+      if (message) {
+        pushObj.$push = {
+          responses: {
+            responder: user?._id || user?.id,
+            responderName: responderName || user?.name || 'ইমার্জেন্সি টিম মেম্বার',
+            responderRole: user?.role === 'admin' ? 'এডমিন' : 'টিম ভলান্টিয়ার',
+            message: message.trim(),
+            createdAt: new Date()
+          }
+        };
+      }
+
+      return await EmergencyRequest.findByIdAndUpdate(
+        id,
+        { $set: update, ...(message ? pushObj : {}) },
+        { new: true }
+      );
+    }
+
+    const reqItem = memoryStore.emergencyRequests.find(r => String(r._id) === String(id));
+    if (reqItem) {
+      reqItem.status = status || reqItem.status;
+      if (assignedVolunteer) reqItem.assignedVolunteer = assignedVolunteer;
+      if (message) {
+        if (!Array.isArray(reqItem.responses)) reqItem.responses = [];
+        reqItem.responses.push({
+          _id: 'resp_' + Date.now(),
+          responder: user?._id || user?.id,
+          responderName: responderName || user?.name || 'ইমার্জেন্সি টিম মেম্বার',
+          responderRole: user?.role === 'admin' ? 'এডমিন' : 'টিম ভলান্টিয়ার',
+          message: message.trim(),
+          createdAt: new Date()
+        });
+      }
+      reqItem.updatedAt = new Date();
+      return reqItem;
+    }
+    return null;
+  },
+
+  async addEmergencyResponse(id, { responder, responderName, responderRole, message }) {
+    if (!id || !message) return null;
+    const responseObj = {
+      responder,
+      responderName: responderName || 'টিম মেম্বার',
+      responderRole: responderRole || 'ইমার্জেন্সি ভলান্টিয়ার',
+      message: message.trim(),
+      createdAt: new Date()
+    };
+
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      if (!isObjectId) return null;
+      return await EmergencyRequest.findByIdAndUpdate(
+        id,
+        { $push: { responses: responseObj } },
+        { new: true }
+      );
+    }
+
+    const reqItem = memoryStore.emergencyRequests.find(r => String(r._id) === String(id));
+    if (reqItem) {
+      if (!Array.isArray(reqItem.responses)) reqItem.responses = [];
+      reqItem.responses.push({ _id: 'resp_' + Date.now(), ...responseObj });
+      return reqItem;
+    }
+    return null;
+  },
+
+  async deleteEmergencyRequest(id) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId ? await EmergencyRequest.findByIdAndDelete(id) : null;
+    }
+    const idx = memoryStore.emergencyRequests.findIndex(r => String(r._id) === String(id));
+    if (idx !== -1) {
+      const removed = memoryStore.emergencyRequests.splice(idx, 1);
+      return removed[0];
+    }
+    return null;
+  },
+
+  // ============================================================================
+  // HEALTH WING: EMERGENCY CELL TEAM (অ্যাক্সেস কন্ট্রোল ও টিম তালিকা)
+  // ============================================================================
+  async getEmergencyTeamMembers() {
+    if (isDatabaseConnected()) {
+      return await EmergencyTeamMember.find({ active: true }).populate('user', 'name email phone avatar role').sort({ createdAt: -1 });
+    }
+    return memoryStore.emergencyTeam.filter(m => m.active !== false);
+  },
+
+  async isEmergencyTeamMember(userId) {
+    if (!userId) return false;
+    if (isDatabaseConnected()) {
+      const count = await EmergencyTeamMember.countDocuments({
+        user: userId,
+        active: true
+      });
+      return count > 0;
+    }
+    return memoryStore.emergencyTeam.some(
+      m => String(m.user?._id || m.user) === String(userId) && m.active !== false
+    );
+  },
+
+  async addEmergencyTeamMember(data) {
+    if (isDatabaseConnected()) {
+      const existing = await EmergencyTeamMember.findOne({ user: data.user });
+      if (existing) {
+        existing.active = true;
+        if (data.roleTitle) existing.roleTitle = data.roleTitle;
+        if (data.hospitalAssigned) existing.hospitalAssigned = data.hospitalAssigned;
+        return await existing.save();
+      }
+      return await EmergencyTeamMember.create(data);
+    }
+
+    const existingIdx = memoryStore.emergencyTeam.findIndex(
+      m => String(m.user?._id || m.user) === String(data.user)
+    );
+    if (existingIdx !== -1) {
+      memoryStore.emergencyTeam[existingIdx].active = true;
+      if (data.roleTitle) memoryStore.emergencyTeam[existingIdx].roleTitle = data.roleTitle;
+      if (data.hospitalAssigned) memoryStore.emergencyTeam[existingIdx].hospitalAssigned = data.hospitalAssigned;
+      return memoryStore.emergencyTeam[existingIdx];
+    }
+
+    const newMember = {
+      _id: 'emg_team_' + Date.now(),
+      ...data,
+      active: true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    memoryStore.emergencyTeam.unshift(newMember);
+    return newMember;
+  },
+
+  async removeEmergencyTeamMember(id) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      if (isObjectId) {
+        return await EmergencyTeamMember.findByIdAndUpdate(id, { active: false }, { new: true });
+      }
+      return await EmergencyTeamMember.findOneAndUpdate({ user: id }, { active: false }, { new: true });
+    }
+
+    const item = memoryStore.emergencyTeam.find(
+      m => String(m._id) === String(id) || String(m.user?._id || m.user) === String(id)
+    );
+    if (item) {
+      item.active = false;
+      return item;
+    }
+    return null;
+  },
+
+  // ============================================================================
+  // HEALTH WING: VOLUNTEER TASK ASSIGNMENTS
+  // ============================================================================
+  async getHealthTasks({ status, assignedToUserId, campId } = {}) {
+    if (isDatabaseConnected()) {
+      const query = {};
+      if (status && status !== 'all') query.status = status;
+      if (assignedToUserId && assignedToUserId !== 'all') query['assignedTo.user'] = assignedToUserId;
+      if (campId && campId !== 'all') query.camp = campId;
+      return await HealthTask.find(query).sort({ dueDate: 1, createdAt: -1 });
+    }
+
+    let list = [...memoryStore.healthTasks];
+    if (status && status !== 'all') list = list.filter(t => t.status === status);
+    if (assignedToUserId && assignedToUserId !== 'all') {
+      list = list.filter(t => String(t.assignedTo?.user) === String(assignedToUserId));
+    }
+    if (campId && campId !== 'all') list = list.filter(t => String(t.camp) === String(campId));
+    return list;
+  },
+
+  async createHealthTask(data) {
+    if (isDatabaseConnected()) {
+      return await HealthTask.create(data);
+    }
+    const newTask = {
+      _id: 'task_' + Date.now(),
+      ...data,
+      status: data.status || 'pending',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    memoryStore.healthTasks.unshift(newTask);
+    return newTask;
+  },
+
+  async updateHealthTaskStatus(id, { status, notes }) {
+    if (!id) return null;
+    const update = { status, updatedAt: new Date() };
+    if (notes !== undefined) update.notes = notes;
+
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId
+        ? await HealthTask.findByIdAndUpdate(id, { $set: update }, { new: true })
+        : null;
+    }
+
+    const task = memoryStore.healthTasks.find(t => String(t._id) === String(id));
+    if (task) {
+      task.status = status || task.status;
+      if (notes !== undefined) task.notes = notes;
+      task.updatedAt = new Date();
+      return task;
+    }
+    return null;
+  },
+
+  async deleteHealthTask(id) {
+    if (!id) return null;
+    if (isDatabaseConnected()) {
+      const isObjectId = typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+      return isObjectId ? await HealthTask.findByIdAndDelete(id) : null;
+    }
+    const idx = memoryStore.healthTasks.findIndex(t => String(t._id) === String(id));
+    if (idx !== -1) {
+      const removed = memoryStore.healthTasks.splice(idx, 1);
+      return removed[0];
     }
     return null;
   }
