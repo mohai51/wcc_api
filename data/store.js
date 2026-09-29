@@ -339,6 +339,12 @@ export const Store = {
       type: 'Expense',
       activityId: data.activityId,
       activityName: data.activityName,
+      eventId: data.eventId,
+      eventTitle: data.eventTitle,
+      programId: data.programId,
+      programTitle: data.programTitle,
+      submittedByName: data.submittedByName,
+      submittedByRole: data.submittedByRole,
       category: data.category,
       description: data.description,
       amount: data.amount,
@@ -351,6 +357,21 @@ export const Store = {
       status: data.isPersonalExpense ? 'Pending Reimbursement' : 'Paid',
       createdBy: data.createdBy
     });
+
+    // If linked to an Activity, update its actualExpense
+    if (data.activityId) {
+      if (isDatabaseConnected()) {
+        await Activity.findOneAndUpdate(
+          { activityId: data.activityId },
+          { $inc: { actualExpense: Number(data.amount) || 0 } }
+        );
+      } else {
+        const act = memoryStore.activities.find(a => a.activityId === data.activityId);
+        if (act) {
+          act.actualExpense = (act.actualExpense || 0) + (Number(data.amount) || 0);
+        }
+      }
+    }
 
     if (isDatabaseConnected()) return await Expense.create(data);
     const newExp = { ...data, _id: 'exp_' + Date.now() };
@@ -479,6 +500,59 @@ export const Store = {
       categorySpend[e.category] = (categorySpend[e.category] || 0) + (e.amount || 0);
     });
 
+    // Event & Program Expenses breakdown
+    const eventWiseExpenses = {};
+    expenses.forEach(e => {
+      const evtKey = e.eventTitle || e.activityName || 'General Operations';
+      if (!eventWiseExpenses[evtKey]) {
+        eventWiseExpenses[evtKey] = {
+          title: evtKey,
+          eventId: e.eventId,
+          activityId: e.activityId,
+          totalAmount: 0,
+          itemCount: 0,
+          submittedBy: e.submittedByName || e.paidBy || 'Leader / Admin'
+        };
+      }
+      eventWiseExpenses[evtKey].totalAmount += (e.amount || 0);
+      eventWiseExpenses[evtKey].itemCount += 1;
+    });
+
+    // Monthly Analytics Trends (last 6 months)
+    const monthlyTrendsMap = {};
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    // Seed current year months
+    for (let m = 0; m < 12; m++) {
+      const key = `2026-${String(m + 1).padStart(2, '0')}`;
+      monthlyTrendsMap[key] = {
+        monthKey: key,
+        label: `${months[m]} 2026`,
+        income: 0,
+        expense: 0
+      };
+    }
+
+    income.forEach(i => {
+      if (i.date) {
+        const ym = i.date.substring(0, 7);
+        if (monthlyTrendsMap[ym]) {
+          monthlyTrendsMap[ym].income += (i.amount || 0);
+        }
+      }
+    });
+
+    expenses.forEach(e => {
+      if (e.date) {
+        const ym = e.date.substring(0, 7);
+        if (monthlyTrendsMap[ym]) {
+          monthlyTrendsMap[ym].expense += (e.amount || 0);
+        }
+      }
+    });
+
+    const monthlyTrends = Object.values(monthlyTrendsMap);
+
     return {
       totalLiquidity,
       totalIncome,
@@ -492,6 +566,8 @@ export const Store = {
         balance: a.currentBalance
       })),
       categorySpend,
+      monthlyTrends,
+      eventWiseExpenses: Object.values(eventWiseExpenses).sort((a, b) => b.totalAmount - a.totalAmount),
       recentTransactions: transactions,
       activitiesSummary: activities.map(act => ({
         id: act.activityId,

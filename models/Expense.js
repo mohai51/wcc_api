@@ -21,6 +21,32 @@ const expenseSchema = new mongoose.Schema(
       type: String,
       trim: true
     },
+    eventId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Event',
+      index: true
+    },
+    eventTitle: {
+      type: String,
+      trim: true
+    },
+    programId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Program',
+      index: true
+    },
+    programTitle: {
+      type: String,
+      trim: true
+    },
+    submittedByName: {
+      type: String,
+      trim: true
+    },
+    submittedByRole: {
+      type: String,
+      trim: true
+    },
     category: {
       type: String,
       required: true,
