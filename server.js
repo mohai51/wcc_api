@@ -15,6 +15,7 @@ import notificationRoutes from './routes/notificationRoutes.js';
 import educationRoutes from './routes/educationRoutes.js';
 import healthWingRoutes from './routes/healthWingRoutes.js';
 
+
 // Validate critical environment variables
 import { validateEnv } from './config/env.js';
 validateEnv();
