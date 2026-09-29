@@ -1,9 +1,9 @@
 import rateLimit from 'express-rate-limit';
 
-// Rate limiter for user authentication endpoints (max 10 requests per 15 minutes per IP)
+// Rate limiter for user authentication endpoints (generous in development for switching roles)
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: {

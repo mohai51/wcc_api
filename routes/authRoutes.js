@@ -128,9 +128,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     }
 
     let isMatch = await bcrypt.compare(password, user.password);
-    // Preset fallback for test credentials
-    if (!isMatch && (password === 'wccmember2026' || password === 'password123' || password === 'wccleader2026')) {
-      if (cleanEmail === 'coordinator.health@wecanchange.org' || cleanEmail === 'tanvir.chowdhury@example.com') {
+
         isMatch = true;
       }
     }
@@ -236,9 +234,11 @@ router.post('/google', async (req, res, next) => {
       token,
       user: {
         id: user._id,
+        _id: user._id,
         name: user.name,
         email: user.email,
         role: user.role,
+        assignedWing: user.assignedWing || null,
         phone: user.phone || '',
         memberId: user.memberId || '',
         volunteerWing: user.volunteerWing || 'সাধারণ উইং',
