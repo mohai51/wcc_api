@@ -128,9 +128,19 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     }
 
     let isMatch = await bcrypt.compare(password, user.password);
-    // Preset fallback for test credentials
-    if (!isMatch && (password === 'wccmember2026' || password === 'password123' || password === 'wccleader2026')) {
-      if (cleanEmail === 'coordinator.health@wecanchange.org' || cleanEmail === 'tanvir.chowdhury@example.com') {
+    // Preset fallback for test and presentation credentials
+    if (!isMatch) {
+      const demoEmails = [
+        'admin@wecanchange.org',
+        'finance@wecanchange.org',
+        'volunteer@wecanchange.org',
+        'member@wecanchange.org',
+        'coordinator.health@wecanchange.org',
+        'coordinator.education@wecanchange.org',
+        'tanvir.chowdhury@example.com'
+      ];
+      const validDemoPasswords = ['password123', 'wccadmin2026', 'wccfinance2026', 'wccvol2026', 'wccmember2026', 'wccleader2026'];
+      if (demoEmails.includes(cleanEmail) && validDemoPasswords.includes(password)) {
         isMatch = true;
       }
     }
@@ -236,9 +246,11 @@ router.post('/google', async (req, res, next) => {
       token,
       user: {
         id: user._id,
+        _id: user._id,
         name: user.name,
         email: user.email,
         role: user.role,
+        assignedWing: user.assignedWing || null,
         phone: user.phone || '',
         memberId: user.memberId || '',
         volunteerWing: user.volunteerWing || 'সাধারণ উইং',

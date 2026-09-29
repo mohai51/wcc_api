@@ -799,7 +799,20 @@ export const Store = {
 
         if (req.type === 'wing_change' && req.requestedWing) {
           if (memberQuery) await Member.findOneAndUpdate(memberQuery, { wing: req.requestedWing });
-          if (userQuery) await User.findOneAndUpdate(userQuery, { volunteerWing: req.requestedWing });
+          if (userQuery) {
+            const cleanWingStr = req.requestedWing.trim();
+            const matchingWing = await Wing.findOne({
+              $or: [
+                { nameBn: cleanWingStr },
+                { nameEn: cleanWingStr },
+                { slug: cleanWingStr.toLowerCase() }
+              ]
+            });
+            await User.findOneAndUpdate(userQuery, {
+              volunteerWing: req.requestedWing,
+              ...(matchingWing ? { assignedWing: matchingWing._id } : {})
+            });
+          }
         } else if (req.type === 'become_volunteer') {
           if (userQuery) {
             await User.findOneAndUpdate(

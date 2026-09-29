@@ -71,7 +71,7 @@ router.post('/invite', verifyToken, requireAdmin, async (req, res, next) => {
 });
 
 // Current user retrieves their notifications (including pending role invitations)
-router.get('/my', verifyToken, async (req, res, next) => {
+const getMyNotifsHandler = async (req, res, next) => {
   try {
     const notifications = await Store.getMyNotifications({
       userId: req.user?.id || req.user?._id,
@@ -84,7 +84,10 @@ router.get('/my', verifyToken, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+};
+
+router.get('/my', verifyToken, getMyNotifsHandler);
+router.get('/', verifyToken, getMyNotifsHandler);
 
 // Current user responds to a role invitation (accept or reject)
 router.post('/:id/respond', verifyToken, async (req, res, next) => {

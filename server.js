@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { connectDB, isDatabaseConnected } from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
 import memberRoutes from './routes/memberRoutes.js';
@@ -14,9 +14,6 @@ import statsRoutes from './routes/statsRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import educationRoutes from './routes/educationRoutes.js';
 import healthWingRoutes from './routes/healthWingRoutes.js';
-
-// Load environment variables
-dotenv.config();
 
 // Validate critical environment variables
 import { validateEnv } from './config/env.js';
