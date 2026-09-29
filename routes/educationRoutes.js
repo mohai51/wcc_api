@@ -25,6 +25,64 @@ const canManageEducationWing = async (user) => {
   return false;
 };
 
+// Robust helper to convert ANY YouTube URL into an embed URL
+const formatYouTubeEmbedUrl = (url) => {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+
+  let videoId = '';
+  const shortMatch = trimmed.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  if (shortMatch && shortMatch[1]) {
+    videoId = shortMatch[1];
+  }
+
+  if (!videoId) {
+    const watchMatch = trimmed.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+    if (watchMatch && watchMatch[1]) {
+      videoId = watchMatch[1];
+    }
+  }
+
+  if (!videoId) {
+    const embedMatch = trimmed.match(/youtube(?:-nocookie)?\.com\/embed\/([a-zA-Z0-9_-]{11})/);
+    if (embedMatch && embedMatch[1]) {
+      videoId = embedMatch[1];
+    }
+  }
+
+  if (!videoId) {
+    const shortsMatch = trimmed.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/);
+    if (shortsMatch && shortsMatch[1]) {
+      videoId = shortsMatch[1];
+    }
+  }
+
+  if (!videoId) {
+    const liveMatch = trimmed.match(/youtube\.com\/live\/([a-zA-Z0-9_-]{11})/);
+    if (liveMatch && liveMatch[1]) {
+      videoId = liveMatch[1];
+    }
+  }
+
+  if (!videoId && /^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+    videoId = trimmed;
+  }
+
+  return videoId ? `https://www.youtube.com/embed/${videoId}` : trimmed;
+};
+
+const sanitizeCourseLessons = (course) => {
+  if (!course) return course;
+  const courseObj = course.toObject ? course.toObject() : { ...course };
+  if (Array.isArray(courseObj.lessons)) {
+    courseObj.lessons = courseObj.lessons.map(les => ({
+      ...les,
+      videoUrl: formatYouTubeEmbedUrl(les.videoUrl)
+    }));
+  }
+  return courseObj;
+};
+
 // ============================================================================
 // 1. FREE COURSES (WCC Education Wing)
 // ============================================================================
@@ -38,7 +96,8 @@ router.get('/courses', optionalAuth, async (req, res, next) => {
     const filterStatus = isLeader ? (status || 'all') : 'published';
 
     const courses = await Store.getCourses({ category, status: filterStatus });
-    res.json(courses);
+    const sanitized = (courses || []).map(c => sanitizeCourseLessons(c));
+    res.json(sanitized);
   } catch (err) {
     next(err);
   }
@@ -61,11 +120,11 @@ router.get('/courses/:id', optionalAuth, async (req, res, next) => {
 
     // If user is not authenticated or not enrolled, hide full video embed links to non-members if wanted,
     // but allow registered members to access freely!
-    const responseData = {
+    const responseData = sanitizeCourseLessons({
       ...course.toObject ? course.toObject() : course,
       isEnrolled,
       canEdit: isLeader
-    };
+    });
 
     res.json(responseData);
   } catch (err) {
@@ -138,6 +197,11 @@ router.post('/courses', verifyToken, async (req, res, next) => {
       .replace(/^-+|-+$/g, '') || `course-${Date.now()}`;
     const uniqueSlug = `${cleanSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const sanitizedLessons = (Array.isArray(lessons) ? lessons : []).map(les => ({
+      ...les,
+      videoUrl: formatYouTubeEmbedUrl(les.videoUrl)
+    }));
+
     const newCourse = await Store.createCourse({
       title: title.trim(),
       slug: uniqueSlug,
@@ -149,7 +213,7 @@ router.post('/courses', verifyToken, async (req, res, next) => {
       duration: duration || 'Self-paced',
       thumbnail: thumbnail || '',
       instructor: instructor || { name: req.user.name || 'WCC Instructor' },
-      lessons: Array.isArray(lessons) ? lessons : [],
+      lessons: sanitizedLessons,
       status: status || 'published',
       createdBy: req.user.id || req.user._id
     });
@@ -165,7 +229,7 @@ router.post('/courses', verifyToken, async (req, res, next) => {
 
     res.status(201).json({
       message: 'Free course launched successfully',
-      course: newCourse
+      course: sanitizeCourseLessons(newCourse)
     });
   } catch (err) {
     next(err);
@@ -180,14 +244,22 @@ router.put('/courses/:id', verifyToken, async (req, res, next) => {
       return res.status(403).json({ error: 'Access denied. Only Admin or Education Wing Leader can update courses.' });
     }
 
-    const updated = await Store.updateCourse(req.params.id, req.body);
+    const updatePayload = { ...req.body };
+    if (Array.isArray(updatePayload.lessons)) {
+      updatePayload.lessons = updatePayload.lessons.map(les => ({
+        ...les,
+        videoUrl: formatYouTubeEmbedUrl(les.videoUrl)
+      }));
+    }
+
+    const updated = await Store.updateCourse(req.params.id, updatePayload);
     if (!updated) {
       return res.status(404).json({ error: 'Course not found' });
     }
 
     res.json({
       message: 'Course updated successfully',
-      course: updated
+      course: sanitizeCourseLessons(updated)
     });
   } catch (err) {
     next(err);

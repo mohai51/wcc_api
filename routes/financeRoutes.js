@@ -1,5 +1,6 @@
 import express from 'express';
 import { Store } from '../data/store.js';
+import { verifyToken, optionalAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -96,28 +97,106 @@ router.post('/income', async (req, res, next) => {
 });
 
 // Expenses
-router.get('/expenses', async (req, res, next) => {
+router.get('/expenses', optionalAuth, async (req, res, next) => {
   try {
-    const expenses = await Store.getExpenses();
+    const { activityId, eventId, category } = req.query;
+    let expenses = await Store.getExpenses();
+    if (activityId) {
+      expenses = expenses.filter(e => String(e.activityId) === String(activityId));
+    }
+    if (eventId) {
+      expenses = expenses.filter(e => String(e.eventId) === String(eventId));
+    }
+    if (category) {
+      expenses = expenses.filter(e => String(e.category).toLowerCase() === String(category).toLowerCase());
+    }
     res.json(expenses);
   } catch (err) {
     next(err);
   }
 });
 
-router.post('/expenses', async (req, res, next) => {
+router.post('/expenses', optionalAuth, async (req, res, next) => {
   try {
-    const { date, category, description, amount } = req.body;
+    const { date, category, description, amount, items, eventId, eventTitle, programId, programTitle } = req.body;
+
+    const submittedByName = req.body.submittedByName || req.user?.name || req.user?.email || 'Leader / Admin';
+    const submittedByRole = req.body.submittedByRole || req.user?.role || 'wing_leader';
+    const createdBy = req.body.createdBy || req.user?.email || req.user?.name || 'system';
+
+    // 1. Bulk creation support (multiple items for an event/program)
+    if (Array.isArray(items) && items.length > 0) {
+      const createdExpenses = [];
+      const expenseDate = date || new Date().toISOString().split('T')[0];
+
+      for (const item of items) {
+        if (!item.description || !item.amount) continue;
+
+        const expensePayload = {
+          date: item.date || expenseDate,
+          category: item.category || category || 'General Event Expense',
+          description: item.description.trim(),
+          amount: Number(item.amount),
+          paymentMethod: item.paymentMethod || req.body.paymentMethod || 'Cash',
+          accountId: item.accountId || req.body.accountId || 'WCC-ACC-000001',
+          accountName: item.accountName || req.body.accountName || 'Cash in Hand (Main Vault)',
+          paidBy: item.paidBy || req.body.paidBy || submittedByName,
+          vendorOrMember: item.vendorOrMember || req.body.vendorOrMember || '',
+          referenceNo: item.referenceNo || req.body.referenceNo || '',
+          activityId: item.activityId || req.body.activityId || '',
+          activityName: item.activityName || req.body.activityName || (eventTitle ? `Event: ${eventTitle}` : ''),
+          eventId: item.eventId || eventId || null,
+          eventTitle: item.eventTitle || eventTitle || '',
+          programId: item.programId || programId || null,
+          programTitle: item.programTitle || programTitle || '',
+          submittedByName,
+          submittedByRole,
+          createdBy,
+          remarks: item.remarks || req.body.remarks || `Submitted for ${eventTitle || 'Event'}`
+        };
+
+        const rec = await Store.createExpense(expensePayload);
+        createdExpenses.push(rec);
+      }
+
+      await Store.addAuditLog({
+        user: submittedByName,
+        role: submittedByRole,
+        action: 'RECORD_EVENT_EXPENSES_BULK',
+        module: 'Finance',
+        recordId: eventId ? String(eventId) : 'BULK',
+        details: `Recorded ${createdExpenses.length} expense items totaling ৳ ${createdExpenses.reduce((s, e) => s + e.amount, 0).toLocaleString()} for event: ${eventTitle || 'General'}`
+      });
+
+      return res.status(201).json({
+        message: 'Successfully recorded all event expenses',
+        count: createdExpenses.length,
+        expenses: createdExpenses
+      });
+    }
+
+    // 2. Single item expense
     if (!date || !category || !description || !amount) {
       return res.status(400).json({ error: 'Date, category, description, and amount are required' });
     }
-    const record = await Store.createExpense(req.body);
+
+    const payload = {
+      ...req.body,
+      submittedByName,
+      submittedByRole,
+      createdBy
+    };
+
+    const record = await Store.createExpense(payload);
     await Store.addAuditLog({
+      user: submittedByName,
+      role: submittedByRole,
       action: 'RECORD_EXPENSE',
       module: 'Finance',
       recordId: record.expenseId,
-      details: `Recorded expense ${record.amount} BDT for ${record.description}`
+      details: `Recorded expense ${record.amount} BDT for ${record.description}${eventTitle ? ` (Event: ${eventTitle})` : ''}`
     });
+
     res.status(201).json(record);
   } catch (err) {
     next(err);
