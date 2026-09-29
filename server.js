@@ -13,6 +13,7 @@ import issueRoutes from './routes/issueRoutes.js';
 import statsRoutes from './routes/statsRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import educationRoutes from './routes/educationRoutes.js';
+import healthWingRoutes from './routes/healthWingRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -25,18 +26,38 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Initialize Database connection (handles MongoDB or resilient store)
-connectDB();
+connectDB().then(async () => {
+  try {
+    const { syncWingsAndEducation } = await import('./scripts/syncWingsAndEducation.js');
+    await syncWingsAndEducation();
+  } catch (err) {
+    console.warn('[Sync Wings Notice]', err.message);
+  }
+}).catch(() => {});
 
 // Middleware
-const clientOrigin = process.env.CLIENT_URL || 'http://localhost:3000';
-if (!process.env.CLIENT_URL) {
-  console.warn('[CORS Notice] CLIENT_URL not set in environment. Defaulting to http://localhost:3000');
-}
+const rawClientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+const clientOrigin = rawClientUrl.replace(/\/+$/, '');
 
 app.use(
   cors({
-    origin: clientOrigin,
-    credentials: true
+    origin: (origin, callback) => {
+      // allow requests with no origin (like mobile apps, curl, server-to-server)
+      if (!origin) return callback(null, true);
+      const cleanOrigin = origin.replace(/\/+$/, '');
+      if (
+        cleanOrigin === clientOrigin ||
+        cleanOrigin.endsWith('.vercel.app') ||
+        cleanOrigin.includes('localhost') ||
+        cleanOrigin.includes('127.0.0.1')
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
   })
 );
 app.use(express.json({ limit: '10mb' }));
@@ -80,18 +101,27 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/members', memberRoutes);
-app.use('/api/finance', financeRoutes);
-app.use('/api/audit', auditRoutes);
-app.use('/api/wings', wingRoutes);
-app.use('/api/programs', programRoutes);
-app.use('/api/events', eventRoutes);
-app.use('/api/issues', issueRoutes);
-app.use('/api/stats', statsRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/education', educationRoutes);
+// API Routes (supports both /api/* and root /* for resilience)
+const routes = [
+  ['/auth', authRoutes],
+  ['/members', memberRoutes],
+  ['/finance', financeRoutes],
+  ['/audit', auditRoutes],
+  ['/wings', wingRoutes],
+  ['/programs', programRoutes],
+  ['/events', eventRoutes],
+  ['/issues', issueRoutes],
+  ['/stats', statsRoutes],
+  ['/notifications', notificationRoutes],
+  ['/education', educationRoutes],
+  ['/health', healthWingRoutes],
+  ['/health-wing', healthWingRoutes]
+];
+
+routes.forEach(([path, router]) => {
+  app.use(`/api${path}`, router);
+  app.use(path, router);
+});
 
 // 404 Handler
 app.use((req, res) => {
